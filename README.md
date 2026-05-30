@@ -1,6 +1,4 @@
 # Code Copy
-
- ddddddddddddddddddddddddddddمممممیزبسزسز
 A VS Code extension that lets you quickly copy file and folder contents with flexible include/exclude filters.
 
 ## Features
