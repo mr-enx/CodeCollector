@@ -1,26 +1,21 @@
-# Python cache
-__pycache__/
-*.py[cod]
-*$py.class
+# Dependencies
+node_modules/
 
-# Virtual environment
-venv/
-env/
-.venv/
+# Compiled output
+out/
+dist/
+
+# VSIX package
+*.vsix
 
 # Logs
 *.log
+npm-debug.log*
 
-# OS files
+# Editor / OS
 .DS_Store
 Thumbs.db
-
-# Editor files
-.vscode/
 .idea/
 
-# Build outputs
-build/
-dist/
-*.exe
-*.spec
+# Local config
+code-copy.json
