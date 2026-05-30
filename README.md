@@ -19,7 +19,7 @@ npm install
 
 bash
 npm run compile
- 
+ dddddddddddddddddddddddddddd
 This compiles the TypeScript source from `src/` into the `out/` folder.
 
 ### 3. Run in development
