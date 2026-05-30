@@ -1075,7 +1075,7 @@ class CodeCollectorApp:
             self.app_config["paths_output_header"] = paths_header_var.get().strip()
 
             self.save_app_config()
-
+ 
             if self.folder_path.get().strip(): 
                 self.scan_folder()
 
