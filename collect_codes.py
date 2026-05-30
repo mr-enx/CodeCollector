@@ -4,7 +4,7 @@ import hashlib
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
-
+#wefwf
 FAVORITES_FILE = "code_collector_favorites.json"
 APP_CONFIG_FILE = "code_collector_app_config.json"
 
