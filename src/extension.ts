@@ -20,6 +20,13 @@ type FileTreeNode = {
   children?: FileTreeNode[];
 };
 
+type Rule = {
+  raw: string;
+  value: string;
+  kind: 'extension' | 'path';
+  anywhere: boolean;
+};
+
 export function activate(context: vscode.ExtensionContext) {
   const provider = new ExporterViewProvider();
 
@@ -74,7 +81,8 @@ class ExporterViewProvider implements vscode.WebviewViewProvider {
         type: 'refreshStarted',
       });
 
-      const files = await collectFiles();
+      const config = await readProjectConfig();
+      const files = await collectFiles(config);
       const tree = buildFileTree(files);
 
       this.view.webview.postMessage({
@@ -103,7 +111,7 @@ class ExporterViewProvider implements vscode.WebviewViewProvider {
       try {
         if (msg.type === 'init') {
           const config = await readProjectConfig();
-          const files = await collectFiles();
+          const files = await collectFiles(config);
           const tree = buildFileTree(files);
 
           view.webview.postMessage({
@@ -167,7 +175,7 @@ class ExporterViewProvider implements vscode.WebviewViewProvider {
 
       await writeProjectConfig(config);
 
-      const files = await collectFiles();
+      const files = await collectFiles(config);
       const finalFiles = filterFilesByConfig(files, config);
 
       const output = await buildOutput(finalFiles);
@@ -200,7 +208,7 @@ class ExporterViewProvider implements vscode.WebviewViewProvider {
 
       await writeProjectConfig(config);
 
-      const files = await collectFiles();
+      const files = await collectFiles(config);
       const finalFiles = filterFilesByConfig(files, config);
 
       const title = config.title.trim();
@@ -238,49 +246,62 @@ function getDefaultConfig(): ExporterConfig {
   };
 }
 
-async function collectFiles(): Promise<string[]> {
+async function collectFiles(config?: ExporterConfig): Promise<string[]> {
   const files = await vscode.workspace.findFiles(
     '**/*',
-    [
-      '**/node_modules/**',
-      '**/.git/**',
-      '**/.next/**',
-      '**/dist/**',
-      '**/build/**',
-      '**/.turbo/**',
-      `**/${CONFIG_DIR}/${CONFIG_FILE}`,
-    ].join(',')
+    '{**/.git/**,**/.next/**,**/.turbo/**,**/.vscode/code-copy.json}'
   );
 
-  return files
-    .map((uri) => vscode.workspace.asRelativePath(uri, false))
+  const relativePaths = files
+    .map((uri) => normalizePath(vscode.workspace.asRelativePath(uri, false)))
     .sort((a, b) => a.localeCompare(b));
+
+  if (!config) {
+    return relativePaths;
+  }
+
+  if (config.mode !== 'ignore') {
+    return relativePaths;
+  }
+
+  const excludeRules = parseRules(config.exclude).filter(
+    (rule) => rule.kind === 'path'
+  );
+
+  if (excludeRules.length === 0) {
+    return relativePaths;
+  }
+
+  return relativePaths.filter((filePath) => {
+    return !excludeRules.some((rule) => matchesRule(filePath, rule));
+  });
 }
 
 function filterFilesByConfig(
   files: string[],
   config: ExporterConfig
 ): string[] {
-  const activeFormats =
+  const rules =
     config.mode === 'showOnly'
-      ? normalizeFormats(config.onlyInclude)
-      : normalizeFormats(config.exclude);
+      ? parseRules(config.onlyInclude)
+      : parseRules(config.exclude);
 
   const filtered = files.filter((filePath) => {
-    const ext = getExt(filePath);
-    const hasMatch = activeFormats.includes(ext);
+    const hasMatch = rules.some((rule) => matchesRule(filePath, rule));
 
     if (config.mode === 'showOnly') {
-      return activeFormats.length === 0 ? true : hasMatch;
+      return rules.length === 0 ? true : hasMatch;
     }
 
     return !hasMatch;
   });
 
-  const selectedSet = new Set(config.selectedFiles || []);
+  const selectedSet = new Set(
+    (config.selectedFiles || []).map((p) => normalizePath(p))
+  );
 
   return selectedSet.size > 0
-    ? filtered.filter((file) => selectedSet.has(file))
+    ? filtered.filter((file) => selectedSet.has(normalizePath(file)))
     : filtered;
 }
 
@@ -357,12 +378,79 @@ function buildFileTree(paths: string[]): FileTreeNode[] {
   return root;
 }
 
-function normalizeFormats(raw: string): string[] {
+function parseRules(raw: string): Rule[] {
   return raw
-    .split(/[\s,]+/)
+    .split(/\r?\n|,/)
     .map((s) => s.trim())
     .filter(Boolean)
-    .map((s) => (s.startsWith('.') ? s : '.' + s).toLowerCase());
+    .map((entry) => {
+      let anywhere = false;
+      let value = entry;
+
+      if (value.startsWith('*')) {
+        anywhere = true;
+        value = value.slice(1).trim();
+      }
+
+      value = normalizePath(value).toLowerCase();
+
+      const kind: 'extension' | 'path' = value.startsWith('.')
+        ? 'extension'
+        : 'path';
+
+      return {
+        raw: entry,
+        value,
+        kind,
+        anywhere,
+      };
+    })
+    .filter((rule) => !!rule.value);
+}
+
+function matchesRule(filePath: string, rule: Rule): boolean {
+  const normalizedPath = normalizePath(filePath).toLowerCase();
+
+  if (rule.kind === 'extension') {
+    const ext = getExt(normalizedPath);
+    return ext === rule.value;
+  }
+
+  const pathSegments = normalizedPath.split('/');
+
+  if (rule.anywhere) {
+    if (normalizedPath === rule.value) {
+      return true;
+    }
+
+    if (normalizedPath.startsWith(rule.value + '/')) {
+      return true;
+    }
+
+    if (normalizedPath.includes('/' + rule.value + '/')) {
+      return true;
+    }
+
+    if (normalizedPath.endsWith('/' + rule.value)) {
+      return true;
+    }
+
+    const singleSegmentPattern = !rule.value.includes('/');
+    if (singleSegmentPattern && pathSegments.includes(rule.value)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  return (
+    normalizedPath === rule.value ||
+    normalizedPath.startsWith(rule.value + '/')
+  );
+}
+
+function normalizePath(value: string): string {
+  return value.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '');
 }
 
 function getExt(filePath: string): string {
@@ -792,15 +880,15 @@ function getHtml(): string {
       <div class="section" id="excludeSection">
         <div class="label-row">
           <label for="exclude">Exclude</label>
-          <span class="hint">Example: .log, .tmp</span>
+          <span class="hint">Examples: .log, node_modules, *node_modules</span>
         </div>
-        <textarea id="exclude" placeholder=".log&#10;.tmp&#10;.map"></textarea>
+        <textarea id="exclude" placeholder=".log&#10;.tmp&#10;node_modules&#10;*node_modules"></textarea>
       </div>
 
       <div class="section" id="onlyIncludeSection">
         <div class="label-row">
           <label for="onlyInclude">Only include</label>
-          <span class="hint">Example: .ts, .json</span>
+          <span class="hint">Examples: .ts, .json, src/generated</span>
         </div>
         <textarea id="onlyInclude" placeholder=".ts&#10;.json"></textarea>
       </div>
