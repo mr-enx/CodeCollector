@@ -9,6 +9,10 @@ dist/
 *.log
 npm-debug.log*
 
+
+# VSIX package
+*.vsix
+
 # Editor / OS
 .DS_Store
 Thumbs.db
