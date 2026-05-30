@@ -130,7 +130,7 @@ class ExporterViewProvider implements vscode.WebviewViewProvider {
         }
 
         if (msg.type === 'saveConfig') {
-          await writeProjectConfig({
+          const config: ExporterConfig = {
             title: String(msg.title || ''),
             mode: normalizeMode(msg.mode),
             exclude: String(msg.exclude || ''),
@@ -138,6 +138,17 @@ class ExporterViewProvider implements vscode.WebviewViewProvider {
             selectedFiles: Array.isArray(msg.selectedFiles)
               ? msg.selectedFiles.map(String)
               : [],
+          };
+
+          await writeProjectConfig(config);
+
+          const files = await collectFiles(config);
+          const tree = buildFileTree(files);
+
+          view.webview.postMessage({
+            type: 'filesRefreshed',
+            files,
+            tree,
           });
 
           return;
@@ -176,7 +187,7 @@ class ExporterViewProvider implements vscode.WebviewViewProvider {
       await writeProjectConfig(config);
 
       const files = await collectFiles(config);
-      const finalFiles = filterFilesByConfig(files, config);
+      const finalFiles = filterSelectedFiles(files, config);
 
       const output = await buildOutput(finalFiles);
 
@@ -209,7 +220,7 @@ class ExporterViewProvider implements vscode.WebviewViewProvider {
       await writeProjectConfig(config);
 
       const files = await collectFiles(config);
-      const finalFiles = filterFilesByConfig(files, config);
+      const finalFiles = filterSelectedFiles(files, config);
 
       const title = config.title.trim();
 
@@ -260,24 +271,10 @@ async function collectFiles(config?: ExporterConfig): Promise<string[]> {
     return relativePaths;
   }
 
-  if (config.mode !== 'ignore') {
-    return relativePaths;
-  }
-
-  const excludeRules = parseRules(config.exclude).filter(
-    (rule) => rule.kind === 'path'
-  );
-
-  if (excludeRules.length === 0) {
-    return relativePaths;
-  }
-
-  return relativePaths.filter((filePath) => {
-    return !excludeRules.some((rule) => matchesRule(filePath, rule));
-  });
+  return applyRulesToFiles(relativePaths, config);
 }
 
-function filterFilesByConfig(
+function applyRulesToFiles(
   files: string[],
   config: ExporterConfig
 ): string[] {
@@ -286,7 +283,7 @@ function filterFilesByConfig(
       ? parseRules(config.onlyInclude)
       : parseRules(config.exclude);
 
-  const filtered = files.filter((filePath) => {
+  return files.filter((filePath) => {
     const hasMatch = rules.some((rule) => matchesRule(filePath, rule));
 
     if (config.mode === 'showOnly') {
@@ -295,14 +292,19 @@ function filterFilesByConfig(
 
     return !hasMatch;
   });
+}
 
+function filterSelectedFiles(
+  files: string[],
+  config: ExporterConfig
+): string[] {
   const selectedSet = new Set(
     (config.selectedFiles || []).map((p) => normalizePath(p))
   );
 
   return selectedSet.size > 0
-    ? filtered.filter((file) => selectedSet.has(normalizePath(file)))
-    : filtered;
+    ? files.filter((file) => selectedSet.has(normalizePath(file)))
+    : files;
 }
 
 async function buildOutput(filePaths: string[]): Promise<string> {
